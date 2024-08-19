@@ -1,0 +1,15 @@
+# count_to_billion.masm
+
+# Setze den Zähler auf 0 und das Ziel auf 1 Milliarde
+MOV R1, 0        # Zähler
+MOV R2, 10  # Zielwert (1 Milliarde)
+
+LOOP_START:
+ADD R1, 1        # Erhöhe den Zähler um 1
+OUT R1           # Gib den aktuellen Wert von R1 aus
+CMP R1, R2       # Vergleiche den Zähler mit dem Zielwert
+JEQ END_LOOP     # Wenn R1 gleich R2 ist, beende die Schleife
+JMP LOOP_START   # Springe zurück zum Anfang der Schleife
+
+END_LOOP:
+HLT              # Beende das Programm
