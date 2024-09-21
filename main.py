@@ -22,27 +22,40 @@ class MiniASMEmulator(threading.Thread):
         self.instruction_count = 0  # Zähler für ausgeführte Anweisungen
         self.open_files = {}  # Geöffnete Dateien
 
+        # Erstelle den geschützten Ordner beim Start des Emulators
+        self.create_protected_folder()
+
+    def create_protected_folder(self):
+        base_dir = os.path.abspath(os.path.join('programms', self.program_name))
+        if not os.path.exists(base_dir):
+            try:
+                os.makedirs(base_dir, exist_ok=True)
+                print(f"Thread {self.thread_id}: Geschützter Ordner '{base_dir}' wurde erstellt.")
+            except Exception as e:
+                print(f"Thread {self.thread_id}: Fehler beim Erstellen des geschützten Ordners: {e}")
+                self.running = False
+
     def load_program(self):
         # Lade das Programm in den Speicher ab Adresse 0
         self.memory[:len(self.program_data)] = self.program_data
 
     def fetch(self):
-        if self.registers['PC'] + 6 > len(self.memory):
+        if self.registers['PC'] + 8 > len(self.memory):
             self.running = False
             return None
-        # Lese 6 Bytes für die Anweisung
-        instr_bytes = self.memory[self.registers['PC']:self.registers['PC'] + 6]
+        # Lese 8 Bytes für die Anweisung
+        instr_bytes = self.memory[self.registers['PC']:self.registers['PC'] + 8]
         instruction = int.from_bytes(instr_bytes, byteorder='big')
-        self.registers['PC'] += 6
+        self.registers['PC'] += 8
         return instruction
 
     def decode_execute(self, instruction):
         if instruction is None:
             return
-        opcode = (instruction >> 40) & 0xFF
-        operand1 = (instruction >> 24) & 0xFFFF
-        operand2 = (instruction >> 8) & 0xFFFF
-        operand3 = instruction & 0xFF
+        opcode = (instruction >> 56) & 0xFF
+        operand1 = (instruction >> 40) & 0xFFFF
+        operand2 = (instruction >> 24) & 0xFFFF
+        operand3 = (instruction >> 8) & 0xFFFF
 
         # Opcode zu Anweisung
         opcode_inv = {v: k for k, v in opcodes.items()}
@@ -62,7 +75,11 @@ class MiniASMEmulator(threading.Thread):
                 operands.append(('reg', reg_num))
             else:
                 # Immediate operand
-                operands.append(('imm', operand))
+                # Um Vorzeichen zu berücksichtigen
+                imm_value = operand & 0x7FFF
+                if imm_value & 0x4000:
+                    imm_value -= 0x8000  # Negative Zahl
+                operands.append(('imm', imm_value))
         operand1_type, operand1_value = operands[0]
         operand2_type, operand2_value = operands[1]
         operand3_type, operand3_value = operands[2]
@@ -385,6 +402,13 @@ class MiniASMEmulator(threading.Thread):
 
 def main():
     programms_dir = 'programms'
+    if not os.path.exists(programms_dir):
+        try:
+            os.makedirs(programms_dir, exist_ok=True)
+            print(f"Verzeichnis '{programms_dir}' wurde erstellt.")
+        except Exception as e:
+            print(f"Fehler beim Erstellen des Verzeichnisses '{programms_dir}': {e}")
+            return
     programms = [f for f in os.listdir(programms_dir) if f.endswith('.bin')]
 
     if not programms:
@@ -412,8 +436,12 @@ def main():
             continue
 
         program_path = os.path.join(programms_dir, programms[idx])
-        with open(program_path, 'rb') as f:
-            program_data = f.read()
+        try:
+            with open(program_path, 'rb') as f:
+                program_data = f.read()
+        except Exception as e:
+            print(f"Fehler beim Lesen der Datei '{programms[idx]}': {e}")
+            continue
 
         program_name = os.path.splitext(programms[idx])[0]
         emulator = MiniASMEmulator(program_data, thread_id=choice, program_name=program_name)
