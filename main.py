@@ -20,7 +20,6 @@ class MiniASMEmulator(threading.Thread):
         self.flag_greater = False  # Greater Flag
         self.flag_less = False  # Less Flag
         self.instruction_count = 0  # Zähler für ausgeführte Anweisungen
-        self.open_files = {}  # Geöffnete Dateien
 
         # Erstelle den geschützten Ordner beim Start des Emulators
         self.create_protected_folder()
@@ -275,80 +274,6 @@ class MiniASMEmulator(threading.Thread):
                 string = string_bytes.decode('ascii', errors='ignore')
                 print(f"Thread {self.thread_id}: {string}")
 
-            # --- Dateioperationen ---
-            elif instr_name == 'OPEN':
-                filename_addr = self.get_value(operand1_type, operand1_value)
-                mode = self.get_value(operand2_type, operand2_value)
-                if operand3_type != 'reg':
-                    print(f"Thread {self.thread_id}: Ungültiger Zieloperand in OPEN")
-                    self.running = False
-                    return
-                fd_reg = f'R{operand3_value}'
-                filename = self.read_string_from_memory(filename_addr)
-                safe_filename = self.get_safe_path(filename)
-                modes = {0: 'r', 1: 'w', 2: 'a'}
-                if mode not in modes:
-                    print(f"Thread {self.thread_id}: Ungültiger Modus in OPEN")
-                    self.running = False
-                    return
-                try:
-                    os.makedirs(os.path.dirname(safe_filename), exist_ok=True)
-                    file_obj = open(safe_filename, modes[mode])
-                    fd = id(file_obj)  # Verwende die id als Dateideskriptor
-                    self.open_files[fd] = file_obj
-                    self.registers[fd_reg] = fd
-                except Exception as e:
-                    print(f"Thread {self.thread_id}: Fehler beim Öffnen der Datei: {e}")
-                    self.running = False
-
-            elif instr_name == 'READ':
-                if operand1_type != 'reg':
-                    print(f"Thread {self.thread_id}: Ungültiger Dateideskriptor in READ")
-                    self.running = False
-                    return
-                fd_reg = f'R{operand1_value}'
-                fd = self.registers.get(fd_reg)
-                mem_addr = self.get_value(operand2_type, operand2_value)
-                num_bytes = self.get_value(operand3_type, operand3_value)
-                if fd in self.open_files:
-                    file_obj = self.open_files[fd]
-                    data = file_obj.read(num_bytes)
-                    self.memory[mem_addr:mem_addr+len(data)] = data.encode('utf-8')
-                else:
-                    print(f"Thread {self.thread_id}: Ungültiger Dateideskriptor in READ")
-                    self.running = False
-
-            elif instr_name == 'WRITE':
-                if operand1_type != 'reg':
-                    print(f"Thread {self.thread_id}: Ungültiger Dateideskriptor in WRITE")
-                    self.running = False
-                    return
-                fd_reg = f'R{operand1_value}'
-                fd = self.registers.get(fd_reg)
-                mem_addr = self.get_value(operand2_type, operand2_value)
-                num_bytes = self.get_value(operand3_type, operand3_value)
-                if fd in self.open_files:
-                    file_obj = self.open_files[fd]
-                    data = self.memory[mem_addr:mem_addr+num_bytes].decode('utf-8', errors='ignore')
-                    file_obj.write(data)
-                else:
-                    print(f"Thread {self.thread_id}: Ungültiger Dateideskriptor in WRITE")
-                    self.running = False
-
-            elif instr_name == 'CLOSE':
-                if operand1_type != 'reg':
-                    print(f"Thread {self.thread_id}: Ungültiger Dateideskriptor in CLOSE")
-                    self.running = False
-                    return
-                fd_reg = f'R{operand1_value}'
-                fd = self.registers.get(fd_reg)
-                if fd in self.open_files:
-                    file_obj = self.open_files.pop(fd)
-                    file_obj.close()
-                else:
-                    print(f"Thread {self.thread_id}: Ungültiger Dateideskriptor in CLOSE")
-                    self.running = False
-
             elif instr_name == 'HALT':
                 self.running = False
 
@@ -365,23 +290,6 @@ class MiniASMEmulator(threading.Thread):
             return self.registers.get(f'R{operand_value}', 0)
         else:
             return operand_value
-
-    def read_string_from_memory(self, addr):
-        string_bytes = bytearray()
-        while True:
-            byte = self.memory[addr]
-            if byte == 0:
-                break
-            string_bytes.append(byte)
-            addr += 1
-        return string_bytes.decode('utf-8', errors='ignore')
-
-    def get_safe_path(self, filename):
-        base_dir = os.path.abspath(os.path.join('programms', self.program_name))
-        safe_path = os.path.normpath(os.path.join(base_dir, filename))
-        if not safe_path.startswith(base_dir):
-            raise ValueError("Unsichere Dateipfadoperation verhindert.")
-        return safe_path
 
     def run(self):
         self.load_program()

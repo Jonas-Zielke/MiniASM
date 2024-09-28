@@ -25,10 +25,6 @@ def assemble_instruction(line, labels, current_address, pass_num, instructions):
         return None, current_address
 
     # Ersetze Kommas durch Leerzeichen, um Operanden zu trennen
-    # Dies verhindert, dass Kommas innerhalb von Strings betroffen sind
-    # Behalte Kommas innerhalb von Anführungszeichen bei
-    # Daher verwenden wir shlex mit angepasstem Split
-    # Alternativ entfernen wir nach dem Split die Kommas
     try:
         parts = shlex.split(line)
     except ValueError as e:
