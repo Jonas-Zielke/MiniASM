@@ -4,6 +4,7 @@ import os
 import shlex
 from opcodes import opcodes
 
+
 def assemble_instruction(line, labels, current_address, pass_num, instructions):
     # Kommentare entfernen und Leerzeichen bereinigen
     line = line.split(';')[0].strip()
@@ -48,7 +49,7 @@ def assemble_instruction(line, labels, current_address, pass_num, instructions):
                 data_bytes.append(number & 0xFF)
             else:
                 # Behandle den Operand als String
-                string = operand
+                string = operand.strip('"').strip("'")  # Entferne Anführungszeichen
                 data_bytes.extend([ord(c) for c in string])
                 data_bytes.append(0)  # Nullterminierung
         if pass_num == 1:
@@ -73,9 +74,9 @@ def assemble_instruction(line, labels, current_address, pass_num, instructions):
         elif operand.startswith('#') and (operand[1:].isdigit() or (operand[1] == '-' and operand[2:].isdigit())):
             # Unmittelbarer Wert
             value = ('imm', int(operand[1:]))
-        elif operand.startswith("'") and operand.endswith("'"):
-            # String-Literal (für Dateioperationen)
-            value = operand[1:-1]
+        elif (operand.startswith('"') and operand.endswith('"')) or (operand.startswith("'") and operand.endswith("'")):
+            # String-Literal
+            value = ('str', operand[1:-1])
         elif operand.upper().startswith('0X') and len(operand) > 2:
             # Hexadezimaler Wert
             try:
@@ -103,31 +104,84 @@ def assemble_instruction(line, labels, current_address, pass_num, instructions):
         for op in operand_values:
             operand_type, operand_value = op
             if operand_type == 'reg':
-                resolved_operands.append((operand_type, operand_value))
+                resolved_operands.append(('reg', operand_value))
             elif operand_type == 'imm':
-                resolved_operands.append((operand_type, operand_value))
+                resolved_operands.append(('imm', operand_value))
             elif operand_type == 'label':
                 if operand_value in labels:
                     resolved_operands.append(('imm', labels[operand_value]))
                 else:
                     raise ValueError(f"Undefiniertes Label: {operand_value}")
-            else:
-                # String-Literal
+            elif operand_type == 'str':
+                # String-Literal: Adresse in der Binärdatei reservieren
                 string_bytes = operand_value.encode('utf-8') + b'\x00'  # Nullterminierung
                 op_address = current_address
                 resolved_operands.append(('imm', op_address))
-                current_address += len(string_bytes)
                 instructions.append(('DB', list(string_bytes)))
+                current_address += len(string_bytes)
+            else:
+                raise ValueError(f"Unbekannter Operandstyp: {operand_type}")
 
         # Speichere die Anweisung
         instructions.append((opcode, resolved_operands))
         current_address += 8
         return None, current_address
 
+
+def find_asm_files(directory):
+    asm_files = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.lower().endswith('.asm'):
+                full_path = os.path.join(root, file)
+                relative_path = os.path.relpath(full_path, directory)
+                asm_files.append(relative_path)
+    return asm_files
+
+
 def main():
-    asm_path = input("Bitte geben Sie den Pfad zur Assembly-Datei ein: ")
-    if not os.path.isfile(asm_path):
-        print("Datei nicht gefunden.")
+    asm_dir = 'asm'
+    if not os.path.exists(asm_dir):
+        print(f"Verzeichnis '{asm_dir}' existiert nicht.")
+        return
+
+    asm_files = find_asm_files(asm_dir)
+    if not asm_files:
+        print(f"Keine .asm-Dateien im Verzeichnis '{asm_dir}' gefunden.")
+        return
+
+    print("Gefundene Assembly-Dateien:")
+    for idx, file in enumerate(asm_files, start=1):
+        print(f"{idx}: {file}")
+    print("0: Alle Dateien konvertieren")
+
+    # Benutzer zur Auswahl auffordern
+    print("\nWelche Dateien möchten Sie konvertieren? (Geben Sie die Nummern mit Komma getrennt ein, max. 4) oder '0' für alle:")
+    choices = input().replace(' ', '').split(',')
+
+    # Prüfe, ob '0' ausgewählt wurde
+    if '0' in choices:
+        selected_files = asm_files.copy()
+    else:
+        # Begrenze auf maximal 4 Dateien
+        max_choices = 4
+        if len(choices) > max_choices:
+            print(f"Sie können maximal {max_choices} Dateien gleichzeitig konvertieren.")
+            return
+
+        selected_files = []
+        for choice in choices:
+            if not choice.isdigit():
+                print(f"Ungültige Auswahl: {choice} (keine Zahl)")
+                continue
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(asm_files):
+                print(f"Ungültige Auswahl: {choice} (außerhalb des gültigen Bereichs)")
+                continue
+            selected_files.append(asm_files[idx])
+
+    if not selected_files:
+        print("Keine gültigen Dateien ausgewählt.")
         return
 
     # Stelle sicher, dass das Verzeichnis 'programms' existiert
@@ -140,72 +194,81 @@ def main():
             print(f"Fehler beim Erstellen des Verzeichnisses '{output_dir}': {e}")
             return
 
-    output_filename = os.path.basename(asm_path).rsplit('.', 1)[0] + '.bin'
-    output_path = os.path.join(output_dir, output_filename)
+    # Konvertiere jede ausgewählte Datei
+    for asm_file in selected_files:
+        asm_path = os.path.join(asm_dir, asm_file)
+        print(f"\nKonvertiere '{asm_file}'...")
+        output_filename = os.path.basename(asm_file).rsplit('.', 1)[0] + '.bin'
+        output_path = os.path.join(output_dir, output_filename)
 
-    # Labels sammeln
-    labels = {}
-    current_address = 0
+        # Labels sammeln
+        labels = {}
+        current_address = 0
 
-    with open(asm_path, 'r') as asm_file:
-        lines = asm_file.readlines()
-
-    # Erster Durchlauf: Labels sammeln und Adressen berechnen
-    for line in lines:
         try:
-            _, current_address = assemble_instruction(line, labels, current_address, pass_num=1, instructions=[])
-        except ValueError as ve:
-            print(f"Fehler im ersten Durchlauf: {ve}")
-            return
+            with open(asm_path, 'r', encoding='utf-8') as asm_f:
+                lines = asm_f.readlines()
+        except Exception as e:
+            print(f"Fehler beim Lesen der Datei '{asm_file}': {e}")
+            continue
 
-    # Zweiter Durchlauf: Anweisungen assemblieren
-    current_address = 0
-    instructions = []
-    for line in lines:
-        try:
-            _, current_address = assemble_instruction(line, labels, current_address, pass_num=2, instructions=instructions)
-        except ValueError as ve:
-            print(f"Fehler im zweiten Durchlauf: {ve}")
-            return
+        # Erster Durchlauf: Labels sammeln und Adressen berechnen
+        for line_num, line in enumerate(lines, start=1):
+            try:
+                _, current_address = assemble_instruction(line, labels, current_address, pass_num=1, instructions=[])
+            except ValueError as ve:
+                print(f"Fehler im ersten Durchlauf der Datei '{asm_file}' in Zeile {line_num}: {ve}")
+                break
+        else:
+            # Zweiter Durchlauf: Anweisungen assemblieren
+            current_address = 0
+            instructions = []
+            for line_num, line in enumerate(lines, start=1):
+                try:
+                    _, current_address = assemble_instruction(line, labels, current_address, pass_num=2, instructions=instructions)
+                except ValueError as ve:
+                    print(f"Fehler im zweiten Durchlauf der Datei '{asm_file}' in Zeile {line_num}: {ve}")
+                    break
+            else:
+                # Schreibe die Anweisungen in die Binärdatei
+                try:
+                    with open(output_path, 'wb') as bin_f:
+                        for instr_or_data in instructions:
+                            if instr_or_data[0] == 'DB':
+                                # Daten schreiben
+                                data_bytes = instr_or_data[1]
+                                bin_f.write(bytes(data_bytes))
+                            else:
+                                opcode = instr_or_data[0]
+                                operands = instr_or_data[1]
+                                # Maschineninstruktion erstellen
+                                instruction_value = opcode << 56
+                                for i, operand in enumerate(operands):
+                                    operand_type, operand_value = operand
+                                    if operand_type == 'reg':
+                                        # Setze das höchste Bit, um anzuzeigen, dass es sich um ein Register handelt
+                                        operand_encoded = operand_value | 0x8000
+                                    elif operand_type == 'imm':
+                                        # Unmittelbarer Wert, höchstes Bit ist 0
+                                        operand_encoded = operand_value & 0x7FFF
+                                    else:
+                                        raise ValueError(f"Unbekannter Operandstyp beim Schreiben: {operand_type}")
 
-    # Schreibe die Anweisungen in die Binärdatei
-    try:
-        with open(output_path, 'wb') as bin_file:
-            for instr_or_data in instructions:
-                if instr_or_data[0] == 'DB':
-                    # Daten schreiben
-                    data_bytes = instr_or_data[1]
-                    bin_file.write(bytes(data_bytes))
-                else:
-                    opcode = instr_or_data[0]
-                    operands = instr_or_data[1]
-                    # Maschineninstruktion erstellen
-                    instruction_value = opcode << 56
-                    for i, operand in enumerate(operands):
-                        operand_type, operand_value = operand
-                        if operand_type == 'reg':
-                            # Setze das höchste Bit, um anzuzeigen, dass es sich um ein Register handelt
-                            operand_value = operand_value | 0x8000
-                        else:
-                            # Unmittelbarer Wert, höchstes Bit ist 0
-                            operand_value = operand_value & 0x7FFF
+                                    # Position bestimmen
+                                    if i == 0:
+                                        instruction_value |= (operand_encoded & 0xFFFF) << 40
+                                    elif i == 1:
+                                        instruction_value |= (operand_encoded & 0xFFFF) << 24
+                                    elif i == 2:
+                                        instruction_value |= (operand_encoded & 0xFFFF) << 8
+                                bin_f.write(instruction_value.to_bytes(8, byteorder='big'))
+                    print(f"Das Programm wurde erfolgreich in '{output_path}' gespeichert.")
+                    print("Labels und Adressen:")
+                    for label, addr in labels.items():
+                        print(f"{label}: {addr}")
+                except Exception as e:
+                    print(f"Fehler beim Schreiben der Binärdatei für '{asm_file}': {e}")
 
-                        # Position bestimmen
-                        if i == 0:
-                            instruction_value |= (operand_value & 0xFFFF) << 40
-                        elif i == 1:
-                            instruction_value |= (operand_value & 0xFFFF) << 24
-                        elif i == 2:
-                            instruction_value |= (operand_value & 0xFFFF) << 8
-                    bin_file.write(instruction_value.to_bytes(8, byteorder='big'))
-    except Exception as e:
-        print(f"Fehler beim Schreiben der Binärdatei: {e}")
-        return
-
-    print(f"Das Programm wurde erfolgreich in '{output_path}' gespeichert.")
-    print("Labels und Adressen:")
-    for label, addr in labels.items():
-        print(f"{label}: {addr}")
 
 if __name__ == "__main__":
     main()
